@@ -11,13 +11,25 @@ from matplotlib.figure import Figure
 
 
 class TableModel(QAbstractTableModel):
+    dataChangedSignal = QtCore.pyqtSignal()
+
     def __init__(self, data):
         super(TableModel, self).__init__()
         self._data = data
 
     def data(self, index, role):
-        if role == Qt.DisplayRole:
+        if role == Qt.DisplayRole or role == Qt.EditRole:
             return self._data[index.row()][index.column()]
+
+    def setData(self, index, value, role):
+        if role == Qt.EditRole:
+            self._data[index.row()][index.column()] = float(value)
+            self.dataChangedSignal.emit()
+            return True
+        return False
+
+    def flags(self, index):
+        return Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable
 
     def rowCount(self, index):
         return len(self._data)
@@ -26,15 +38,44 @@ class TableModel(QAbstractTableModel):
         return len(self._data[0])
 
 
-class PlotWidget(QWidget):
-    functions = {
-        1 : np.sin,
-        2 : np.cos,
-    }
+class ExtendedTableModel(QAbstractTableModel):
+    def __init__(self, data):
+        super(ExtendedTableModel, self).__init__()
+        self._data = data
+        self._sum_data = self.calculate_sums()
 
+    def data(self, index, role):
+        if role == Qt.DisplayRole:
+            return self._sum_data[index.row()][index.column()]
+
+    def rowCount(self, index):
+        return len(self._sum_data)
+
+    def columnCount(self, index):
+        return 2
+
+    def headerData(self, section, orientation, role):
+        if role == Qt.DisplayRole:
+            if orientation == Qt.Horizontal:
+                if section == 0:
+                    return "X"
+                elif section == 1:
+                    return "Sum(Y)"
+            elif orientation == Qt.Vertical:
+                return str(section + 1)
+
+    def calculate_sums(self):
+        unique_x = np.unique([row[0] for row in self._data])
+        sums = []
+        for x in unique_x:
+            y_sum = sum([row[1] for row in self._data if row[0] == x])
+            sums.append([x, y_sum])
+        return sums
+
+
+class PlotWidget(QWidget):
     def __init__(self, parent=None):
         super(PlotWidget, self).__init__(parent)
-
         self.initUi()
 
     def initUi(self):
@@ -47,27 +88,16 @@ class PlotWidget(QWidget):
         self.mainLayout.addWidget(self.canvas)
         self.mainLayout.addWidget(self.navToolbar)
 
-    def plot(self):
-        function_index = random.randint(1, 2)
-        function = PlotWidget.functions[function_index]
-        x = np.linspace(-10, 10, 2000)
-        y = function(x)
+    def plot(self, data):
+        data = np.transpose(data)
+        x = data[0]
+        y = data[1]
 
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         ax.set_facecolor("#DCDCDC")
 
-        ax.axhline(y=0, xmin=-10.25, xmax=10.25, color="#000000")
-        ax.axvline(x=0, ymin=-2, ymax=2, color="#000000")
-
-        ax.set_ylim([-2, 2])
-        ax.set_xlim([-10.25, 10.25])
-
-        if function == np.sin or function == np.cos:
-            ax.axhline(y=1, xmin=-10.25, xmax=10.25, color='b', linestyle='--')
-            ax.axhline(y=-1, xmin=-10.25, xmax=10.25, color='b', linestyle='--')
-
-        ax.plot(x, y, linestyle='-.', color='#008000', label=function.__name__)
+        ax.plot(x, y, linestyle='-.', color='#008000', label="Function")
         ax.legend(loc="upper right")
         self.canvas.draw()
 
@@ -76,27 +106,33 @@ class MyWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        self.data = [
+            [1, 2],
+            [2, 1],
+            [3, 2],
+            [4, 1],
+            [5, 2]
+        ]
+
         self.initUi()
         self.connectUi()
+        self.update_plot()
 
     def initUi(self):
         self.centralWidget = QWidget(self)
 
         self.main_layout = QHBoxLayout(self.centralWidget)
+        self.tables_layout = QVBoxLayout(self.centralWidget)
         self.plot_layout = QVBoxLayout(self.centralWidget)
         self.button_layout = QHBoxLayout(self.centralWidget)
 
         self.table = QTableView()
+        self.sumTable = QTableView()
 
-        data = [
-            [4, 9],
-            [1, 0],
-            [3, 5],
-            [3, 3],
-            [7, 8]
-        ]
+        self.create_models()
+        self.set_table_settings()
 
-        self.model = TableModel(data)
+        self.model = TableModel(self.data)
         self.table.setModel(self.model)
 
         self.plotWidget = PlotWidget()
@@ -113,14 +149,38 @@ class MyWindow(QMainWindow):
         self.plot_layout.addLayout(self.button_layout)
         self.plot_layout.addWidget(self.plotWidget)
 
-        self.main_layout.addWidget(self.table)
+        self.tables_layout.addWidget(self.table)
+        self.tables_layout.addWidget(self.sumTable)
+
+        self.main_layout.addLayout(self.tables_layout)
         self.main_layout.addLayout(self.plot_layout)
 
         self.setCentralWidget(self.centralWidget)
 
+    def create_models(self):
+        self.model = TableModel(self.data)
+        self.sum_model = ExtendedTableModel(self.data)
+
+    def set_table_settings(self):
+        self.table.setModel(self.model)
+        self.sumTable.setModel(self.sum_model)
+
     def connectUi(self):
-        self.plotButton.clicked.connect(self.plotWidget.plot)
+        # ... (existing connections)
+        self.model.dataChangedSignal.connect(self.update_data)
+
+    def update_plot(self):
+        self.plotWidget.plot(self.model._data)
+
+    def update_data(self):
+        self.sum_model = ExtendedTableModel(self.model._data)
+        self.sumTable.setModel(self.sum_model)
+
+    def connectUi(self):
+        self.plotButton.clicked.connect(self.update_plot)
         self.clearButton.clicked.connect(self.clear)
+        self.model.dataChanged.connect(self.update_plot)
+        self.model.dataChangedSignal.connect(self.update_data)
 
     def clear(self):
         self.plotWidget.figure.clear()
