@@ -21,6 +21,16 @@ class TableModel(QAbstractTableModel):
         if role == Qt.DisplayRole or role == Qt.EditRole:
             return self._data[index.row()][index.column()]
 
+    def headerData(self, section, orientation, role):
+        if role == Qt.DisplayRole:
+            if orientation == Qt.Horizontal:
+                if section == 0:
+                    return "X"
+                elif section == 1:
+                    return "Y"
+            elif orientation == Qt.Vertical:
+                return str(section + 1)
+
     def setData(self, index, value, role):
         if role == Qt.EditRole:
             self._data[index.row()][index.column()] = float(value)
@@ -41,18 +51,17 @@ class TableModel(QAbstractTableModel):
 class ExtendedTableModel(QAbstractTableModel):
     def __init__(self, data):
         super(ExtendedTableModel, self).__init__()
-        self._data = data
-        self._sum_data = self.calculate_sums()
+        self._data = self.calculate_extended_data(data)
 
     def data(self, index, role):
         if role == Qt.DisplayRole:
-            return self._sum_data[index.row()][index.column()]
+            return self._data[index.row()][index.column()]
 
-    def rowCount(self, index):
-        return len(self._sum_data)
+    def rowCount(self, parent):
+        return len(self._data)
 
-    def columnCount(self, index):
-        return 2
+    def columnCount(self, parent):
+        return len(self._data[0])
 
     def headerData(self, section, orientation, role):
         if role == Qt.DisplayRole:
@@ -60,17 +69,15 @@ class ExtendedTableModel(QAbstractTableModel):
                 if section == 0:
                     return "X"
                 elif section == 1:
-                    return "Sum(Y)"
+                    return "X + Y"
             elif orientation == Qt.Vertical:
                 return str(section + 1)
 
-    def calculate_sums(self):
-        unique_x = np.unique([row[0] for row in self._data])
-        sums = []
-        for x in unique_x:
-            y_sum = sum([row[1] for row in self._data if row[0] == x])
-            sums.append([x, y_sum])
-        return sums
+    def calculate_extended_data(self, data):
+        extended_data = []
+        for row in data:
+            extended_data.append([row[0], row[0] + row[1]])
+        return extended_data
 
 
 class PlotWidget(QWidget):
@@ -136,6 +143,7 @@ class MyWindow(QMainWindow):
         self.table.setModel(self.model)
 
         self.plotWidget = PlotWidget()
+        self.otherPlotWidget = PlotWidget()
 
         self.plotButton = QPushButton("Plot")
         self.clearButton = QPushButton("Clear")
@@ -148,6 +156,7 @@ class MyWindow(QMainWindow):
 
         self.plot_layout.addLayout(self.button_layout)
         self.plot_layout.addWidget(self.plotWidget)
+        self.plot_layout.addWidget(self.otherPlotWidget)
 
         self.tables_layout.addWidget(self.table)
         self.tables_layout.addWidget(self.sumTable)
@@ -166,15 +175,19 @@ class MyWindow(QMainWindow):
         self.sumTable.setModel(self.sum_model)
 
     def connectUi(self):
-        # ... (existing connections)
+        self.plotButton.clicked.connect(self.update_plot)
+        self.clearButton.clicked.connect(self.clear)
+        self.model.dataChanged.connect(self.update_plot)
         self.model.dataChangedSignal.connect(self.update_data)
 
     def update_plot(self):
         self.plotWidget.plot(self.model._data)
+        self.otherPlotWidget.plot(self.sum_model._data)
 
     def update_data(self):
-        self.sum_model = ExtendedTableModel(self.model._data)
-        self.sumTable.setModel(self.sum_model)
+        self.sum_model.beginResetModel()
+        self.sum_model._data = self.sum_model.calculate_extended_data(self.model._data)
+        self.sum_model.endResetModel()
 
     def connectUi(self):
         self.plotButton.clicked.connect(self.update_plot)
